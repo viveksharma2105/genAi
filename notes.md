@@ -7,3 +7,7 @@ source .venv/bin/activate
 
 first make sure you have the requirements.txt file in the Intro directory, then run:
 pip install -r Intro/requirements.txt
+
+## Run the code
+python Intro/your_script.py
+
