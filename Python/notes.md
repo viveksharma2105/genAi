@@ -11,3 +11,10 @@ pip install -r Intro/requirements.txt
 ## Run the code
 python Intro/your_script.py
 
+## Pydantic
+import BaseModel
+Type Annotations (give the type to all the variables)
+Model init (always unpack the  dictonary {**< dictonary >})
+
+
+
