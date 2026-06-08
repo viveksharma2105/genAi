@@ -1,106 +1,223 @@
-#chain of thought prompting : breaking down a complex problem into smaller steps to help the model reason through it.
+
 from dotenv import load_dotenv
 from openai import OpenAI
+from urllib.parse import quote
 import requests
 import json
+import os
 
+# Load environment variables
 load_dotenv()
 
+# OpenAI client
 client = OpenAI()
 
+# =========================
+# TOOLS
+# =========================
+
+def run_command(cmd: str):
+    result = os.system(cmd)
+    return result
+
 def get_weather(city: str):
-    url = f"https://wttr.in/{city.lower()}?format=%C+%t"
-    response = requests.get(url)
-    
-    if response.status_code == 200:
+    """
+    Fetch current weather using wttr.in
+    """
+    try:
+        city_encoded = quote(city.strip())
+
+        url = f"https://wttr.in/{city_encoded}?format=%C+%t"
+
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+
         return f"The current weather in {city} is: {response.text}"
-    return "Sorry, I couldn't fetch the weather information right now."
+
+    except Exception as e:
+        return f"Failed to fetch weather data: {str(e)}"
+
 
 available_tools = {
     "get_weather": get_weather
 }
 
-SYSTEM_PROMPT ="""
-You are an expert AI assistant that helps users solving queries using chain of thought .
-You work on START, PLAN and OUTPUT steps.
-You need to  first PLAN what needs to be done. The PLAN can be  in multiple steps.
-Once you think enough PLAN has been made, finally you can give the OUTPUT.
-You can also use TOOLS if required in between the steps.
-For every tool call wait for the observe step which is the output from the called tool.
+
+# =========================
+# SYSTEM PROMPT
+# =========================
+
+SYSTEM_PROMPT = """
+You are an expert AI assistant that solves user queries using a structured reasoning process.
+
+You must work in the following sequence:
+
+START -> PLAN -> TOOL (optional) -> OBSERVE -> PLAN -> OUTPUT
 
 Rules:
-- Strictly follow the  JSON Output Format.
-- One  run  one step at a time.
-- The sequence of steps is START (where user give an input), PLAN (That can multiple steps) and OUTPUT (final answer).
 
-Output Format:JSON format:
-{  "STEP": "START" | "PLAN" | "OUTPUT" |"Tool", "content": "String", "tool": "string", "input": "string"}
+1. Return EXACTLY ONE JSON object in every response.
+2. Return EXACTLY ONE step at a time.
+3. Never skip directly from START to OUTPUT unless the task is trivial.
+4. If a tool is needed, return a TOOL step.
+5. After receiving an OBSERVE message, continue reasoning and eventually return OUTPUT.
+6. Always return valid JSON.
 
-Available TOOLS:
-1. get_weather(city: str): takes city name as input and gives current weather information of that city.
+Output Schema:
 
-EXAMPLE1 :
-START: Hey, can you solve 2+3*5 / 10 
-PLAN: {"step":"PLAN":"content":"Seems like user is interested in solving a mathematical expression"}
-PLAN: {"step":"PLAN":"content":"looking at the expression, we need to follow BODMAS rule"}
-PLAN: {"step":"PLAN":"content":Yes, the BODMAS is the coorrect approach here."}
-PLAN: {"step":"PLAN":"content":First we multiply 3*5 which is 15"}
-PLAN: {"step":"PLAN":"content":Next we divide 15 / 10 which is 1.5"}
-PLAN: {"step":"PLAN":"content":Finally we add 2 + 1.5
-OUTPUT: {"step":"OUTPUT":"content":The final answer is 3.5"}
+{
+    "step": "START" | "PLAN" | "TOOL" | "OUTPUT",
+    "content": "string",
+    "tool": "string",
+    "input": "string"
+}
 
-EXAMPLE2 :
-START: Hey, what's the current weather in new delhi?
-PLAN: {"step":"PLAN":"content":"User is interested in knowing the current weather in new delhi"}
-PLAN: {"step":"PLAN":"content":"We can use get_weather tool to fetch the current weather information"}
-PLAN: {"step":"TOOL":"tool":"get_weather","input":"new delhi"}
-PLAN: {"step":"OBSERVE":"tool":"get_weather","output":"The current weather in new delhi is: Partly cloudy 30°C"}
-PLAN: {"step":"PLAN":"content":"We have got the weather information using the tool, now we can give the final output to user"}
-OUTPUT: {"step":"OUTPUT":"content":"The current weather in new delhi is: Partly cloudy 30°C"}   
+Notes:
 
+- "tool" and "input" are required only when step == "TOOL".
+- For PLAN and OUTPUT, use the "content" field.
+- Think one step at a time.
 
+Available Tools:
 
-  
+1. get_weather(city: str)
+   Returns current weather information for a city.
 
+Example:
+
+User: What's the weather in New Delhi?
+
+Assistant:
+{
+    "step": "PLAN",
+    "content": "The user wants current weather information for New Delhi."
+}
+
+Assistant:
+{
+    "step": "PLAN",
+    "content": "Weather information requires calling the weather tool."
+}
+
+Assistant:
+{
+    "step": "TOOL",
+    "tool": "get_weather",
+    "input": "New Delhi"
+}
+
+OBSERVE:
+{
+    "step": "OBSERVE",
+    "tool": "get_weather",
+    "output": "The current weather in New Delhi is: Partly cloudy 30°C"
+}
+
+Assistant:
+{
+    "step": "PLAN",
+    "content": "Weather information has been retrieved successfully."
+}
+
+Assistant:
+{
+    "step": "OUTPUT",
+    "content": "The current weather in New Delhi is: Partly cloudy 30°C"
+}
 """
-print("\n\n\n\n")
+
+
+# =========================
+# MESSAGE HISTORY
+# =========================
+
 msg_history = [
-    {"role": "system", "content": SYSTEM_PROMPT},
-    
+    {
+        "role": "system",
+        "content": SYSTEM_PROMPT
+    }
 ]
 
-user_input = input("👉🏻 ")
-msg_history.append({"role": "user", "content": user_input})
+print("\n")
 
-while True:
+user_input = input("👉🏻 ")
+
+msg_history.append({
+    "role": "user",
+    "content": user_input
+})
+
+# Prevent infinite loops
+MAX_STEPS = 20
+
+for _ in range(MAX_STEPS):
+
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         response_format={"type": "json_object"},
         messages=msg_history
     )
-        
+
     raw_result = response.choices[0].message.content
-    msg_history.append({"role": "assistant", "content": raw_result})
-    parsed_result = json.loads(raw_result)
-    
-    if parsed_result.get("step")  == "START":
-        print(f"🧑‍💻 {parsed_result.get('content')}")
-        continue
-    
-    if parsed_result.get("step")  == "TOOL":
-        tool_to_call = parsed_result.get("tool")
-        tool_input = parsed_result.get("input")
-        print(f"🔧 Calling tool: {tool_to_call} ({tool_input})")
-        
-        tool_response = available_tools[tool_to_call](tool_input)
-        message_history.append({"role": "developer", "content": json.dumps({"step": "OBSERVE", "tool": tool_to_call, "output": tool_response})})
+
+    msg_history.append({
+        "role": "assistant",
+        "content": raw_result
+    })
+
+    try:
+        parsed_result = json.loads(raw_result)
+    except json.JSONDecodeError:
+        print("❌ Invalid JSON returned by model")
+        break
+
+    step = parsed_result.get("step")
+
+    # =========================
+    # PLAN
+    # =========================
+
+    if step == "PLAN":
+        print(f"🧠 PLAN: {parsed_result.get('content')}")
         continue
 
-    if parsed_result.get("step")  == "PLAN":
-         print(f"🧑 {parsed_result.get('content')}")
-         continue
-     
-    if  parsed_result.get("step")  == "OUTPUT":
-        print(f"🤖 {parsed_result.get('content')}")
+    # =========================
+    # TOOL
+    # =========================
+
+    if step == "TOOL":
+
+        tool_name = parsed_result.get("tool")
+        tool_input = parsed_result.get("input")
+
+        if tool_name not in available_tools:
+            print(f"❌ Unknown tool: {tool_name}")
+            break
+
+        print(f"🔧 Calling Tool -> {tool_name}({tool_input})")
+
+        tool_output = available_tools[tool_name](tool_input)
+
+        print(f"👀 OBSERVE: {tool_output}")
+
+        msg_history.append({
+            "role": "user",
+            "content": json.dumps({
+                "step": "OBSERVE",
+                "tool": tool_name,
+                "output": tool_output
+            })
+        })
+
+        continue
+
+    # =========================
+    # OUTPUT
+    # =========================
+
+    if step == "OUTPUT":
+        print(f"\n🤖 {parsed_result.get('content')}")
         break
-print("\n\n\n\n")
+
+else:
+    print("\n❌ Max reasoning steps reached.")
