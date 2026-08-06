@@ -1,0 +1,6 @@
+services:
+  8valkey:
+    image: valkey/valkey
+    ports:
+      - "6372:6372"
+
